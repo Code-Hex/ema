@@ -1,0 +1,6 @@
+#!/usr/bin/env sh
+
+dropdb test
+createdb test
+go run migrate.go
+echo "Migrated"
