@@ -1,59 +1,159 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
+	"github.com/Code-Hex/ema/common"
 	"github.com/dghubble/go-twitter/twitter"
+	"github.com/dghubble/oauth1"
+	"github.com/jinzhu/gorm"
+	_ "github.com/jinzhu/gorm/dialects/postgres"
+	"github.com/k0kubun/pp"
+	"github.com/kelseyhightower/envconfig"
 )
 
-func main() {
-	flags := flag.NewFlagSet("user-auth", flag.ExitOnError)
-	consumerKey := flags.String("consumer-key", "", "Twitter Consumer Key")
-	consumerSecret := flags.String("consumer-secret", "", "Twitter Consumer Secret")
-	accessToken := flags.String("access-token", "", "Twitter Access Token")
-	accessSecret := flags.String("access-secret", "", "Twitter Access Secret")
-	flags.Parse(os.Args[1:])
-	flagutil.SetFlagsFromEnv(flags, "TWITTER")
+type Twitter struct {
+	ConsumerKey    string `envconfig:"TWITTER_CONSUMER_KEY"`
+	ConsumerSecret string `envconfig:"TWITTER_CONSUMER_SECRET"`
+	AccessToken    string `envconfig:"TWITTER_ACCESS_TOKEN"`
+	AccessSecret   string `envconfig:"TWITTER_ACCESS_SECRET"`
+}
 
-	if *consumerKey == "" || *consumerSecret == "" || *accessToken == "" || *accessSecret == "" {
+type Watson struct {
+	Tw Twitter
+	DB *gorm.DB
+}
+
+func (watson *Watson) Twitter() Twitter {
+	return watson.Tw
+}
+
+func New() *Watson {
+	w := new(Watson)
+	if err := envconfig.Process("twitter", &w.Tw); err != nil {
+		log.Fatal(err.Error())
+	}
+
+	db, err := gorm.Open("postgres", "host=localhost dbname=test sslmode=disable")
+	if err != nil {
+		panic(err)
+	}
+	w.DB = db
+
+	return w
+}
+
+func (w *Watson) Close() error {
+	return w.DB.Close()
+}
+
+func (watson *Watson) HasData() bool {
+	twitter := watson.Twitter()
+	consumerKey := twitter.ConsumerKey
+	consumerSecret := twitter.ConsumerSecret
+	accessToken := twitter.AccessToken
+	accessSecret := twitter.AccessSecret
+	return consumerKey != "" && consumerSecret != "" && accessToken != "" && accessSecret != ""
+}
+
+func main() {
+
+	watson := New()
+	defer watson.Close()
+
+	if !watson.HasData() {
 		log.Fatal("Consumer key/secret and Access token/secret required")
 	}
+	watson.APIStreaming()
+}
 
-	config := oauth1.NewConfig(*consumerKey, *consumerSecret)
-	token := oauth1.NewToken(*accessToken, *accessSecret)
-	// OAuth1 http.Client will automatically authorize Requests
+func (watson *Watson) APIStreaming() {
+
+	auth := watson.Twitter()
+
+	config := oauth1.NewConfig(auth.ConsumerKey, auth.ConsumerSecret)
+	token := oauth1.NewToken(auth.AccessToken, auth.AccessSecret)
+
 	httpClient := config.Client(oauth1.NoContext, token)
-
-	// Twitter client
 	client := twitter.NewClient(httpClient)
 
-	// Verify Credentials
-	verifyParams := &twitter.AccountVerifyParams{
-		SkipStatus:   twitter.Bool(true),
-		IncludeEmail: twitter.Bool(true),
+	// Convenience Demux demultiplexed stream messages
+	demux := twitter.NewSwitchDemux()
+	demux.Tweet = watson.StreamAndInsert
+
+	fmt.Println("Starting Stream...")
+
+	// FILTER
+	filterParams := &twitter.StreamFilterParams{
+		Track:         []string{"猫", "ねこ", "にゃんこ", "にゃー"},
+		StallWarnings: twitter.Bool(true),
+		Language:      []string{"ja"},
 	}
-	user, _, _ := client.Accounts.VerifyCredentials(verifyParams)
-	fmt.Printf("User's ACCOUNT:\n%+v\n", user)
+	stream, err := client.Streams.Filter(filterParams)
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	// Home Timeline
-	homeTimelineParams := &twitter.HomeTimelineParams{Count: 2}
-	tweets, _, _ := client.Timelines.HomeTimeline(homeTimelineParams)
-	fmt.Printf("User's HOME TIMELINE:\n%+v\n", tweets)
+	// USER (quick test: auth'd user likes a tweet -> event)
+	// userParams := &twitter.StreamUserParams{
+	// 	StallWarnings: twitter.Bool(true),
+	// 	With:          "followings",
+	// 	Language:      []string{"en"},
+	// }
+	// stream, err := client.Streams.User(userParams)
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
 
-	// Mention Timeline
-	mentionTimelineParams := &twitter.MentionTimelineParams{Count: 2}
-	tweets, _, _ = client.Timelines.MentionTimeline(mentionTimelineParams)
-	fmt.Printf("User's MENTION TIMELINE:\n%+v\n", tweets)
+	// SAMPLE
+	// sampleParams := &twitter.StreamSampleParams{
+	// 	StallWarnings: twitter.Bool(true),
+	// }
+	// stream, err := client.Streams.Sample(sampleParams)
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
 
-	// Retweets of Me Timeline
-	retweetTimelineParams := &twitter.RetweetsOfMeTimelineParams{Count: 2}
-	tweets, _, _ = client.Timelines.RetweetsOfMeTimeline(retweetTimelineParams)
-	fmt.Printf("User's 'RETWEETS OF ME' TIMELINE:\n%+v\n", tweets)
+	// Receive messages until stopped or stream quits
+	go demux.HandleChan(stream.Messages)
 
-	// Update (POST!) Tweet (uncomment to run)
-	// tweet, _, _ := client.Statuses.Update("just setting up my twttr", nil)
-	// fmt.Printf("Posted Tweet\n%v\n", tweet)
+	// Wait for SIGINT and SIGTERM (HIT CTRL-C)
+	ch := make(chan os.Signal)
+	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM)
+	log.Println(<-ch)
+
+	fmt.Println("Stopping Stream...")
+	stream.Stop()
+}
+
+func (watson *Watson) StreamAndInsert(tweet *twitter.Tweet) {
+	if tweet.Lang == "ja" && tweet.RetweetedStatus == nil {
+		pp.Println(tweet.Text)
+		tweetdb := new(common.Tweet)
+		userdb := new(common.User)
+		userdb.ID = tweet.User.ID
+		tweetdb.Text = tweet.Text
+
+		imagedb := make([]common.Image, 0, 4)
+		for _, media := range tweet.Entities.Media {
+			if media.Type == "photo" {
+				imagedb = append(imagedb, common.Image{
+					TweetId:   tweet.ID,
+					URL:       media.MediaURLHttps,
+					CreatedAt: time.Now(),
+					UpdatedAt: time.Now(),
+				})
+			}
+		}
+
+		tweetdb.Images = imagedb
+		fmt.Printf("Inserted: %d\n", userdb.ID)
+		watson.DB.Create(&userdb)
+		watson.DB.Create(&tweetdb)
+	}
 }
