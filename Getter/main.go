@@ -10,27 +10,15 @@ import (
 
 	"github.com/Code-Hex/ema/common"
 	"github.com/dghubble/go-twitter/twitter"
-	"github.com/dghubble/oauth1"
 	"github.com/jinzhu/gorm"
 	_ "github.com/jinzhu/gorm/dialects/postgres"
 	"github.com/k0kubun/pp"
 	"github.com/kelseyhightower/envconfig"
 )
 
-type Twitter struct {
-	ConsumerKey    string `envconfig:"TWITTER_CONSUMER_KEY"`
-	ConsumerSecret string `envconfig:"TWITTER_CONSUMER_SECRET"`
-	AccessToken    string `envconfig:"TWITTER_ACCESS_TOKEN"`
-	AccessSecret   string `envconfig:"TWITTER_ACCESS_SECRET"`
-}
-
 type Watson struct {
 	Tw Twitter
 	DB *gorm.DB
-}
-
-func (watson *Watson) Twitter() Twitter {
-	return watson.Tw
 }
 
 func New() *Watson {
@@ -53,12 +41,7 @@ func (w *Watson) Close() error {
 }
 
 func (watson *Watson) HasData() bool {
-	twitter := watson.Twitter()
-	consumerKey := twitter.ConsumerKey
-	consumerSecret := twitter.ConsumerSecret
-	accessToken := twitter.AccessToken
-	accessSecret := twitter.AccessSecret
-	return consumerKey != "" && consumerSecret != "" && accessToken != "" && accessSecret != ""
+	return watson.Tw.HasData()
 }
 
 func main() {
@@ -74,13 +57,7 @@ func main() {
 
 func (watson *Watson) APIStreaming() {
 
-	auth := watson.Twitter()
-
-	config := oauth1.NewConfig(auth.ConsumerKey, auth.ConsumerSecret)
-	token := oauth1.NewToken(auth.AccessToken, auth.AccessSecret)
-
-	httpClient := config.Client(oauth1.NoContext, token)
-	client := twitter.NewClient(httpClient)
+	client := watson.Tw.Auth()
 
 	// Convenience Demux demultiplexed stream messages
 	demux := twitter.NewSwitchDemux()
