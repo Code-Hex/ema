@@ -11,16 +11,15 @@ type User struct {
 }
 
 type Tweet struct {
-	UserId    int64 `gorm:"index"`
-	TweetId   int64
-	Text      string `gorm:"type:varchar(140);not null"`
+	ID        int64  `gorm:"primary_key"`
+	Text      string `gorm:"type:varchar(255);not null"`
 	Images    []Image
 	UpdatedAt time.Time
 	CreatedAt time.Time
 }
 
 type Image struct {
-	TweetId   int64
+	ID        int64
 	URL       string `gorm:"type:varchar(255);not null"`
 	UpdatedAt time.Time
 	CreatedAt time.Time
