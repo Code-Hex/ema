@@ -1,0 +1,14 @@
+#!/bin/bash
+
+CURDIR=`dirname $0`
+cd $CURDIR
+
+exec carton exec start_server --port=${PORT:-3000} \
+  --interval=5 \
+  --dir=$CURDIR \
+  --signal-on-hup=QUIT \
+  --status-file=$CURDIR/pids/start_server.status \
+  --pid-file=$CURDIR/pids/start_server.pid \
+  -- \
+  carton exec starman -I$CURDIR/lib --preload-app --access-log=$CURDIR/log/access_log \
+  $CURDIR/app.pl

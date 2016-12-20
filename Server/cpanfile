@@ -1,0 +1,6 @@
+requires 'DBIx::Simple';
+requires 'Encode';
+requires 'Mojolicious::Lite';
+requires 'Text::Shirasu';
+requires 'Server::Starter';
+requires 'Net::Server::SS::PreFork';
