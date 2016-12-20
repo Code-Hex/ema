@@ -148,6 +148,7 @@ func (watson *Watson) InsertUserTweets(tweets []twitter.Tweet) {
 		}
 
 		tweetdb.ID = t.ID
+		tweetdb.UserID = t.User.ID
 		tweetdb.Text = t.Text
 		for _, media := range t.Entities.Media {
 			if media.Type == "photo" {
