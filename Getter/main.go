@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Code-Hex/ema/common"
+	"github.com/Songmu/prompter"
 	"github.com/dghubble/go-twitter/twitter"
 	"github.com/jinzhu/gorm"
 	_ "github.com/jinzhu/gorm/dialects/postgres"
@@ -44,53 +45,60 @@ func (watson *Watson) HasData() bool {
 }
 
 func main() {
-
 	watson := New()
 	defer watson.Close()
 
 	if !watson.HasData() {
 		log.Fatal("Consumer key/secret and Access token/secret required")
 	}
+	watson.UserInput()
+	log.Println("Start Crawl...")
 	watson.Crawl()
 }
 
 func (watson *Watson) Crawl() {
-
-	client := watson.Tw.Auth()
-
-	// Convenience Demux demultiplexed stream messages
-	demux := twitter.NewSwitchDemux()
-	demux.Tweet = watson.FetchUserInsert
-
-	fmt.Println("Starting Stream...")
-
-	// FILTER
-	filterParams := &twitter.StreamFilterParams{
-		Track:         []string{"猫", "ねこ", "ネコ", "にゃんこ", "にゃー"},
-		StallWarnings: twitter.Bool(true),
-		Language:      []string{"ja"},
-	}
-	stream, err := client.Streams.Filter(filterParams)
-	if err != nil {
-		log.Fatal(err)
-	}
-
 	go watson.CrawlTimeline()
-
-	// Receive messages until stopped or stream quits
-	go demux.HandleChan(stream.Messages)
 
 	// Wait for SIGINT and SIGTERM (HIT CTRL-C)
 	ch := make(chan os.Signal)
 	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM, syscall.SIGKILL)
 	log.Println(<-ch)
+}
 
-	fmt.Println("Stopping Stream...")
-	stream.Stop()
+func (watson *Watson) UserInput() {
+	client := watson.Tw.Auth()
+	for {
+		screenID := prompter.Prompt("Enter user twitter ID", "")
+		if screenID == "" {
+			break
+		}
+
+		params := &twitter.UserShowParams{
+			ScreenName:      screenID,
+			IncludeEntities: twitter.Bool(false),
+		}
+		user, _, err := client.Users.Show(params)
+		if err != nil {
+			log.Println(err.Error())
+			continue
+		}
+
+		userdb := new(common.User)
+
+		var count int64
+		watson.DB.Where("id = ?", user.ID).First(new(common.User)).Count(&count)
+		if count == 0 {
+			userdb.ID = user.ID
+			fmt.Printf("Inserted: %d\n", userdb.ID)
+			watson.DB.Create(userdb)
+		} else {
+			log.Printf("Already exist: %s as %d\n", user.ScreenName, user.ID)
+		}
+	}
 }
 
 func (watson *Watson) CrawlTimeline() {
-	rows, err := watson.DB.Model(&common.User{}).Select("id").Rows()
+	rows, err := watson.DB.Model(new(common.User)).Select("id").Rows()
 	if err != nil {
 		log.Fatal(err.Error())
 	}
@@ -106,6 +114,7 @@ func (watson *Watson) CrawlTimeline() {
 func (watson *Watson) GetUserTimeline(id int64) {
 	var tweetid int64
 	client := watson.Tw.Auth()
+
 	for {
 		count := 100
 
@@ -115,15 +124,11 @@ func (watson *Watson) GetUserTimeline(id int64) {
 				MaxID:  tweetid,
 				Count:  count,
 			})
-
-			if tweets == nil {
-				return
-			}
-
 			if err != nil {
 				log.Println("Error:", err.Error())
 				continue
 			}
+
 			watson.InsertUserTweets(tweets)
 			tweetid = tweets[len(tweets)-1].ID
 			log.Println("MaxID:", tweetid)
@@ -164,15 +169,8 @@ func (watson *Watson) InsertUserTweets(tweets []twitter.Tweet) {
 }
 
 func (watson *Watson) FetchUserInsert(tweet *twitter.Tweet) {
-	if tweet.Lang == "ja" && tweet.RetweetedStatus == nil {
-		userdb := new(common.User)
 
-		var count int64
-		watson.DB.Where("id = ?", tweet.User.ID).First(&common.User{}).Count(&count)
-		if count == 0 {
-			userdb.ID = tweet.User.ID
-			fmt.Printf("Inserted: %d\n", userdb.ID)
-			watson.DB.Create(userdb)
-		}
+	if tweet.Lang == "ja" && tweet.RetweetedStatus == nil {
+
 	}
 }
