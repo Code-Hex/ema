@@ -110,7 +110,7 @@ func (watson *Watson) CrawlTimeline() {
 			tweet common.Tweet
 		)
 		watson.DB.ScanRows(rows, &user)
-		watson.DB.Where("user_id = ?", user.ID).Last(&tweet)
+		watson.DB.Where("user_id = ?", user.ID).First(&tweet)
 		watson.GetUserTimeline(user.ID, tweet.ID)
 	}
 }
