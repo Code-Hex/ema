@@ -105,14 +105,17 @@ func (watson *Watson) CrawlTimeline() {
 	defer rows.Close()
 
 	for rows.Next() {
-		var user common.User
+		var (
+			user  common.User
+			tweet common.Tweet
+		)
 		watson.DB.ScanRows(rows, &user)
-		watson.GetUserTimeline(user.ID)
+		watson.DB.Where("user_id = ?", user.ID).Last(&tweet)
+		watson.GetUserTimeline(user.ID, tweet.ID)
 	}
 }
 
-func (watson *Watson) GetUserTimeline(id int64) {
-	var tweetid int64
+func (watson *Watson) GetUserTimeline(id, tid int64) {
 	client := watson.Tw.Auth()
 
 	for {
@@ -121,7 +124,7 @@ func (watson *Watson) GetUserTimeline(id int64) {
 		for i := 1; i < 10; i++ {
 			tweets, _, err := client.Timelines.UserTimeline(&twitter.UserTimelineParams{
 				UserID: id,
-				MaxID:  tweetid,
+				MaxID:  tid,
 				Count:  count,
 			})
 			if err != nil {
@@ -134,8 +137,8 @@ func (watson *Watson) GetUserTimeline(id int64) {
 			}
 
 			watson.InsertUserTweets(tweets)
-			tweetid = tweets[len(tweets)-1].ID
-			log.Println("MaxID:", tweetid)
+			tid = tweets[len(tweets)-1].ID
+			log.Println("MaxID:", tid)
 		}
 
 		log.Println("Sleeping...")
