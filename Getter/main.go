@@ -129,6 +129,10 @@ func (watson *Watson) GetUserTimeline(id int64) {
 				continue
 			}
 
+			if len(tweets) <= 1 {
+				return
+			}
+
 			watson.InsertUserTweets(tweets)
 			tweetid = tweets[len(tweets)-1].ID
 			log.Println("MaxID:", tweetid)
@@ -165,12 +169,5 @@ func (watson *Watson) InsertUserTweets(tweets []twitter.Tweet) {
 			}
 		}
 		watson.DB.Create(tweetdb)
-	}
-}
-
-func (watson *Watson) FetchUserInsert(tweet *twitter.Tweet) {
-
-	if tweet.Lang == "ja" && tweet.RetweetedStatus == nil {
-
 	}
 }
